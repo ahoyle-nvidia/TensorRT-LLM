@@ -22,6 +22,7 @@
 
 namespace tensorrt_llm::executor
 {
+KvCacheRetentionConfig KvCacheRetentionConfig::kDefaultConfig = KvCacheRetentionConfig();
 
 KvCacheRetentionConfig::TokenRangeRetentionConfig::TokenRangeRetentionConfig(SizeType32 tokenStart,
     std::optional<SizeType32> tokenEnd, RetentionPriority priority, std::optional<std::chrono::milliseconds> durationMs)
