@@ -241,6 +241,14 @@ void runPartialCopyTest()
     std::string directory = "";
     static int file_num = 0;
 
+    KvCacheRetentionConfig retentionConfig = {
+        {},
+        KvCacheRetentionConfig::kDefaultRetentionPriority,
+        std::nullopt,
+        KvCacheTransferMode::GDS,
+        "/mnt/nvme" // NOTE: HARDCODED FIX eventually
+    };
+
     if constexpr (transferMode == KvCacheTransferMode::GDS)
     {
         std::string filename = std::string("test_copy") + std::to_string(file_num++);
@@ -303,7 +311,7 @@ void runPartialCopyTest()
         auto block = blockManager.getBlockById(cacheBlockId, maxAttentionWindow);
         EXPECT_TRUE(block->isPrimary());
         // offload so we can write to block in CPU code
-        blockManager.offloadBlock(block, maxAttentionWindow, transferMode, directory);
+        blockManager.offloadBlock(block, maxAttentionWindow, retentionConfig);
         EXPECT_FALSE(block->isPrimary());
         // need to sync so D2H transfer is done before accessing blocks
         EXPECT_EQ(cudaDeviceSynchronize(), cudaSuccess);
@@ -323,7 +331,7 @@ void runPartialCopyTest()
             writePatternToOffloadedBlocksGDS<T>(directory, block_id, numPools, blockSize, mask);
         }
         // onboard
-        blockManager.onboardBlock(seq0, block, maxAttentionWindow, transferMode, directory);
+        blockManager.onboardBlock(seq0, block, maxAttentionWindow, retentionConfig);
         EXPECT_TRUE(block->isPrimary());
         EXPECT_EQ(cudaDeviceSynchronize(), cudaSuccess);
         EXPECT_TRUE(blockManager.verifyQueueIntegrity(maxAttentionWindow));
@@ -373,7 +381,7 @@ void runPartialCopyTest()
 
     // Verify partial copied block 2
     // Block has shape [2, numLayers, numKvHeads, tokensPerBlock, sizePerHead]
-    blockManager.offloadBlock(block2, maxAttentionWindow);
+    blockManager.offloadBlock(block2, maxAttentionWindow, retentionConfig);
     EXPECT_FALSE(block2->isPrimary());
     // need to sync so D2H transfer is done before accessing blocks
     EXPECT_EQ(cudaDeviceSynchronize(), cudaSuccess);
@@ -401,7 +409,7 @@ void runPartialCopyTest()
         }
     }
     EXPECT_EQ(numBad, 0);
-    blockManager.onboardBlock(seq2, block2, maxAttentionWindow, transferMode, directory);
+    blockManager.onboardBlock(seq2, block2, maxAttentionWindow, retentionConfig);
     EXPECT_TRUE(block2->isPrimary());
     EXPECT_EQ(cudaDeviceSynchronize(), cudaSuccess);
 
@@ -4161,6 +4169,7 @@ TEST_F(KVCacheManagerTest, KVCacheManagerEventStreamWindowSize)
 
 TEST_F(KVCacheManagerTest, KVCacheTransferManagerConcurrencyTest)
 {
+    KvCacheRetentionConfig retentionConfig = KvCacheRetentionConfig::kDefaultConfig;
     auto const blockSize = 16384;
 
     auto bufferManager = tensorrt_llm::runtime::BufferManager(std::make_shared<tr::CudaStream>());
@@ -4182,12 +4191,12 @@ TEST_F(KVCacheManagerTest, KVCacheTransferManagerConcurrencyTest)
     auto primaryBlock = std::make_shared<KVCacheBlock>(0, tensorrt_llm::kernels::KVCacheIndex(0, false));
     auto secondaryBlock = std::make_shared<KVCacheBlock>(1, tensorrt_llm::kernels::KVCacheIndex(0, true));
 
-    transferManager.offload(primaryBlock, secondaryBlock, {pool});
+    transferManager.offload(primaryBlock, secondaryBlock, {pool}, 0, retentionConfig.getTransferMode(), retentionConfig.getDirectory());
     primaryBlock->swapMemoryPoolBlockOffset(secondaryBlock);
-    transferManager.onboard(primaryBlock, secondaryBlock, {pool});
+    transferManager.onboard(primaryBlock, secondaryBlock, {pool}, 0, retentionConfig.getTransferMode(), retentionConfig.getDirectory());
     transferManager.syncTransfers();
 
-    transferManager.offload(primaryBlock, secondaryBlock, {pool});
+    transferManager.offload(primaryBlock, secondaryBlock, {pool}, 0, retentionConfig.getTransferMode(), retentionConfig.getDirectory());
     bufferManager.getStream().synchronize();
 
     for (int i = 0; i < blockSize; i++)

@@ -480,6 +480,11 @@ public:
         }
     }
 
+    [[nodiscard]] executor::KvCacheRetentionConfig const& getKvCacheRetentionConfig() const
+    {
+        return mKvCacheRetentionConfig;
+    }
+
     [[nodiscard]] executor::RetentionPriority getDecodeRetentionPriority() const
     {
         return mKvCacheRetentionConfig.getDecodeRetentionPriority();
@@ -768,13 +773,13 @@ public:
 
     //! \brief Bring offloaded block from secondary to primary memory.
     //! \details Does nothing if block is already in primary memory.
-    void onboardBlock(GenerationRequest& sequence, BlockPtr const& offloadBlock,
-        executor::KvCacheTransferMode mode = executor::KvCacheTransferMode::DRAM, std::string const& directory = "");
+    void onboardBlock(GenerationRequest& sequence, BlockPtr const& offloadBlock, 
+        executor::KvCacheRetentionConfig const& config = executor::KvCacheRetentionConfig::kDefaultConfig);
 
     //! \brief Bring block from primary to secondary memory.
     //! \details Does nothing if block is already in secondary memory.
-    void offloadBlock(BlockPtr const& block, executor::KvCacheTransferMode mode = executor::KvCacheTransferMode::DRAM,
-        std::string const& directory = "");
+    void offloadBlock(BlockPtr const& block,
+        executor::KvCacheRetentionConfig const& config = executor::KvCacheRetentionConfig::kDefaultConfig);
 
     //! \brief Find first new block that must be allocated for context phase and return it's concatenated token vectors.
     //! \details Only full blocks are considered.
@@ -861,7 +866,7 @@ private:
     //! \return Number of matched tokens from loaded blocks.
     SizeType32 loadOrAllocateBlocks(std::vector<BlockKey> const& blockKeys, SizeType32 numContextBlocks,
         GenerationRequest& sequence, std::vector<executor::RetentionPriorityAndDuration> const& perBlockRetentions,
-        executor::KvCacheTransferMode mode = executor::KvCacheTransferMode::DRAM, std::string const& directory = "");
+        executor::KvCacheRetentionConfig const& config = executor::KvCacheRetentionConfig::kDefaultConfig);
 
     //! \brief Free block and all it's descendants. This makes block a claimed leaf block.
     void freeChildren(BlockPtr const& block);
@@ -871,7 +876,7 @@ private:
     [[nodiscard]] BlockPtr getFreeBlock(GenerationRequest& sequence,
         executor::RetentionPriority = executor::KvCacheRetentionConfig::kDefaultRetentionPriority,
         std::optional<std::chrono::milliseconds> durationMs = std::nullopt,
-        executor::KvCacheTransferMode mode = executor::KvCacheTransferMode::DRAM, std::string const& directory = "");
+        executor::KvCacheRetentionConfig const& config = executor::KvCacheRetentionConfig::kDefaultConfig);
 
     //! \brief Calls KVCacheBlock::freeLeafBlock to remove block from search tree.
     void freeLeafBlock(BlockPtr const& block);
@@ -1038,12 +1043,12 @@ public:
     //! \brief Bring block from primary to secondary memory for window size.
     //! \details Does nothing if block is already in primary memory.
     void onboardBlock(GenerationRequest& sequence, BlockPtr const& offloadBlock, SizeType32 windowSize,
-        executor::KvCacheTransferMode mode = executor::KvCacheTransferMode::DRAM, std::string const& directory = "");
+        executor::KvCacheRetentionConfig const& config = executor::KvCacheRetentionConfig::kDefaultConfig);
 
     //! \brief Bring block from primary to secondary memory for window size.
     //! \details Does nothing if block is already in secondary memory.
     void offloadBlock(BlockPtr const& block, SizeType32 windowSize,
-        executor::KvCacheTransferMode mode = executor::KvCacheTransferMode::DRAM, std::string const& directory = "");
+        executor::KvCacheRetentionConfig const& config = executor::KvCacheRetentionConfig::kDefaultConfig);
 
     [[nodiscard]] std::pair<SizeType32, std::optional<KVCacheBlock::IdType>> storeBlocks(
         std::vector<BlockKey> const& blockKeys, std::vector<KVCacheBlock::IdType> const& blockIds,

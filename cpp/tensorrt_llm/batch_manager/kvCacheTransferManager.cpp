@@ -28,9 +28,6 @@
 #include "tensorrt_llm/runtime/cudaEvent.h"
 #include "tensorrt_llm/runtime/cudaStream.h"
 
-#ifdef ENABLE_CUFILE
-#include <cufile.h>
-#endif
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>

@@ -549,6 +549,7 @@ public:
     static constexpr RetentionPriority kMinRetentionPriority = 0;
     static constexpr RetentionPriority kMaxRetentionPriority = 100;
     static constexpr RetentionPriority kDefaultRetentionPriority = 35;
+    inline static KvCacheRetentionConfig kDefaultConfig = KvCacheRetentionConfig();
 
     /// @brief A single entry to set block priorities over a token range. Earlier ranges always take priority over later
     /// ones. For example, with a block size of 16, a range of [0, 17] would be applied to the first two blocks.

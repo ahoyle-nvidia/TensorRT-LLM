@@ -923,8 +923,7 @@ void WindowBlockManager::freeChildren(BlockPtr const& block)
 }
 
 BlockPtr WindowBlockManager::getFreeBlock(GenerationRequest& sequence, executor::RetentionPriority priority,
-    std::optional<std::chrono::milliseconds> durationMs, executor::KvCacheTransferMode mode,
-    std::string const& directory)
+    std::optional<std::chrono::milliseconds> durationMs, executor::KvCacheRetentionConfig const& config)
 {
     // eviction policy get free primary block
     auto [block, canOffload] = mEvictionPolicy->getFreeBlock(kPrimaryLevel);
@@ -943,7 +942,7 @@ BlockPtr WindowBlockManager::getFreeBlock(GenerationRequest& sequence, executor:
     {
         // Offload block in primary memory before repurposing
         auto offloadBlock = std::get<0>(mEvictionPolicy->getFreeBlock(kSecondaryLevel));
-        mTransferManager->offload(block, offloadBlock, mPools, 0, mode, directory);
+        mTransferManager->offload(block, offloadBlock, mPools, 0, config.getTransferMode(), config.getDirectory());
         // swap linear block offsets (i.e. make block the offload block)
         block->swapMemoryPoolBlockOffset(offloadBlock);
 
@@ -1026,19 +1025,21 @@ void BlockManager::setOffsets(tk::KVCacheIndex* offsetsPtr, nvinfer1::Dims const
 }
 
 void BlockManager::onboardBlock(GenerationRequest& sequence, BlockPtr const& offloadBlock, SizeType32 windowSize,
-    executor::KvCacheTransferMode mode, std::string const& directory)
+    executor::KvCacheRetentionConfig const& config)
 {
-    mWindowBlockManagers.at(windowSize).onboardBlock(sequence, offloadBlock, mode, directory);
+    mWindowBlockManagers.at(windowSize).onboardBlock(sequence, offloadBlock, config);
 }
 
 void WindowBlockManager::onboardBlock(GenerationRequest& sequence, BlockPtr const& offloadBlock,
-    executor::KvCacheTransferMode mode, std::string const& directory)
+    executor::KvCacheRetentionConfig const& config)
 {
     if (mOnboardBlocks && !offloadBlock->isPrimary())
     {
         auto block = getFreeBlock(
-            sequence, executor::KvCacheRetentionConfig::kDefaultRetentionPriority, std::nullopt, mode, directory);
-        mTransferManager->onboard(offloadBlock, block, mPools, 0, mode, directory);
+            sequence, executor::KvCacheRetentionConfig::kDefaultRetentionPriority, 
+            std::nullopt, config);
+        mTransferManager->onboard(
+            offloadBlock, block, mPools, 0, config.getTransferMode(), config.getDirectory());
         // swap linear block offsets (i.e. make block the offload block and vice versa)
         offloadBlock->swapMemoryPoolBlockOffset(block);
 
@@ -1054,13 +1055,13 @@ void WindowBlockManager::onboardBlock(GenerationRequest& sequence, BlockPtr cons
 }
 
 void BlockManager::offloadBlock(
-    BlockPtr const& block, SizeType32 windowSize, executor::KvCacheTransferMode mode, std::string const& directory)
+    BlockPtr const& block, SizeType32 windowSize, executor::KvCacheRetentionConfig const& config)
 {
-    mWindowBlockManagers.at(windowSize).offloadBlock(block, mode, directory);
+    mWindowBlockManagers.at(windowSize).offloadBlock(block, config);
 }
 
 void WindowBlockManager::offloadBlock(
-    BlockPtr const& block, executor::KvCacheTransferMode mode, std::string const& directory)
+    BlockPtr const& block, executor::KvCacheRetentionConfig const& config)
 {
     // The current default behavior is to offload the out-of-window block
     // to secondary block pool to allow more free primary blocks for reuse.
@@ -1074,7 +1075,7 @@ void WindowBlockManager::offloadBlock(
         auto offloadBlock = std::get<0>(mEvictionPolicy->getFreeBlock(kSecondaryLevel));
         // If we're swapping a block to secondary memory, maintain the prior priority values.
         mEvictionPolicy->claimBlock(offloadBlock);
-        mTransferManager->offload(block, offloadBlock, mPools, 0, mode, directory);
+        mTransferManager->offload(block, offloadBlock, mPools, 0, config.getTransferMode(), config.getDirectory());
         // swap linear block offsets (i.e. make block the offload block)
         block->swapMemoryPoolBlockOffset(offloadBlock);
 
@@ -1158,7 +1159,7 @@ std::shared_ptr<KVCacheBlock> WindowBlockManager::findBlocksInReuseTreeByBlockKe
 
 SizeType32 WindowBlockManager::loadOrAllocateBlocks(std::vector<BlockKey> const& blockKeys, SizeType32 numContextBlocks,
     GenerationRequest& sequence, std::vector<executor::RetentionPriorityAndDuration> const& perBlockRetentions,
-    executor::KvCacheTransferMode mode, std::string const& directory)
+    executor::KvCacheRetentionConfig const& config)
 {
     std::lock_guard<std::mutex> lock(mCachedBlocksRootMutex);
     SizeType32 numMatchedTokens{0};
@@ -1194,8 +1195,8 @@ SizeType32 WindowBlockManager::loadOrAllocateBlocks(std::vector<BlockKey> const&
                 {
                     // Somebody else is using block or it is not a leaf, copy reusable tokens
                     auto newBlock = getFreeBlock(
-                        sequence, matchingBlock->getPriority(), matchingBlock->getDurationMs(), mode, directory);
-                    mTransferManager->onboard(matchingBlock, newBlock, mPools, numMatched, mode, directory);
+                        sequence, matchingBlock->getPriority(), matchingBlock->getDurationMs(), config);
+                    mTransferManager->onboard(matchingBlock, newBlock, mPools, numMatched, config.getTransferMode(), config.getDirectory());
                     // TODO: (optional) Send out event
                     matchingBlock = newBlock;
                     if (blockItr != blockKeys.end())
@@ -1226,7 +1227,7 @@ SizeType32 WindowBlockManager::loadOrAllocateBlocks(std::vector<BlockKey> const&
                 TLLM_LOG_DEBUG("%s::loadOrAllocateBlocks - Matched full block %d", mLogPrefix.c_str(), matchingBlockId);
                 searchRoot = matchingBlock;
             }
-            onboardBlock(sequence, matchingBlock, mode, directory);
+            onboardBlock(sequence, matchingBlock, config);
             addBlockToAllBeams(matchingBlock, sequence);
             // TODO: only add once for reused blocks
             ++mReusedBlocks;
@@ -1243,7 +1244,7 @@ SizeType32 WindowBlockManager::loadOrAllocateBlocks(std::vector<BlockKey> const&
             auto freeBlock = getFreeBlock(sequence,
                 perBlockRetentions[bi].retentionPriority.value_or(
                     executor::KvCacheRetentionConfig::kDefaultRetentionPriority),
-                perBlockRetentions[bi].durationMs, mode, directory);
+                perBlockRetentions[bi].durationMs, config);
             addBlockToAllBeams(freeBlock, sequence);
             TLLM_LOG_DEBUG("%s::loadOrAllocateBlocks - No match, allocated new block %d for sequence %lu",
                 mLogPrefix.c_str(), freeBlock->getBlockId(), sequence.getRequestId());
@@ -1270,7 +1271,7 @@ SizeType32 WindowBlockManager::loadOrAllocateBlocks(std::vector<BlockKey> const&
             auto freeBlock = getFreeBlock(sequence,
                 perBlockRetentions[bi].retentionPriority.value_or(
                     executor::KvCacheRetentionConfig::kDefaultRetentionPriority),
-                perBlockRetentions[bi].durationMs, mode, directory);
+                perBlockRetentions[bi].durationMs, config);
             addBlockToBeam(freeBlock, sequence, beamIdx);
             if (blockItr != blockKeys.end())
             {
@@ -1356,7 +1357,8 @@ void WindowBlockManager::addSequence(
     TLLM_CHECK(perBlockRetentions.size() == (size_t) numContextBlocks);
 
     auto const prepopulatedPromptLen
-        = loadOrAllocateBlocks(blockKeys, numContextBlocks, sequence, perBlockRetentions, mode, directory);
+        = loadOrAllocateBlocks(blockKeys, numContextBlocks, sequence, perBlockRetentions, 
+            config.value_or(executor::KvCacheRetentionConfig::kDefaultConfig));
     mReusedTokens += static_cast<double>(prepopulatedPromptLen);
     mTotalInputTokens += static_cast<double>(uniqueTokens.size());
 
@@ -1471,11 +1473,13 @@ void WindowBlockManager::allocateBlock(GenerationRequest& sequence, bool shareAm
 
     TLLM_CHECK_WITH_INFO(hasFreeBlocks(requiredBlocks), "Can't allocate new blocks. No free blocks left.");
 
+    auto config = sequence.getKvCacheRetentionConfig();
+
     if (shareAmongBeams)
     {
         // add same block to all beams
-        auto block = getFreeBlock(sequence, sequence.getDecodeRetentionPriority(), sequence.getDecodeDurationMs(),
-            sequence.getTransferMode(), sequence.getDirectory());
+        auto block = getFreeBlock(sequence, sequence.getDecodeRetentionPriority(), 
+            sequence.getDecodeDurationMs(), config);
         for (auto beamIdx = 0; beamIdx < beamWidth; ++beamIdx)
         {
             addBlockToBeam(block, sequence, beamIdx);
@@ -1486,8 +1490,8 @@ void WindowBlockManager::allocateBlock(GenerationRequest& sequence, bool shareAm
         // add different block to each beam
         for (auto beamIdx = 0; beamIdx < beamWidth; ++beamIdx)
         {
-            auto block = getFreeBlock(sequence, sequence.getDecodeRetentionPriority(), sequence.getDecodeDurationMs(),
-                sequence.getTransferMode(), sequence.getDirectory());
+            auto block = getFreeBlock(sequence, sequence.getDecodeRetentionPriority(), 
+                sequence.getDecodeDurationMs(), config);
             addBlockToBeam(block, sequence, beamIdx);
         }
     }
@@ -1574,6 +1578,7 @@ void BlockManager::replaceSharedBlock(GenerationRequest& sequence, SizeType32 wi
 
 void WindowBlockManager::replaceSharedBlock(GenerationRequest& sequence, SizeType32 blockIdx)
 {
+    auto config = sequence.getKvCacheRetentionConfig();
     auto const requestId = sequence.getRequestId();
     auto const beamWidth = sequence.getBeamWidth();
     auto& allocatedBlocks = mAllocatedBlocksPerSeq.at(requestId);
@@ -1600,8 +1605,8 @@ void WindowBlockManager::replaceSharedBlock(GenerationRequest& sequence, SizeTyp
     TLLM_CHECK_WITH_INFO(hasFreeBlocks(beamWidth), "Can't allocate new blocks. No free blocks left.");
     for (auto beamIdx = 0; beamIdx < beamWidth; ++beamIdx)
     {
-        auto block = getFreeBlock(sequence, executor::KvCacheRetentionConfig::kDefaultRetentionPriority, std::nullopt,
-            sequence.getTransferMode(), sequence.getDirectory());
+        auto block = getFreeBlock(sequence, executor::KvCacheRetentionConfig::kDefaultRetentionPriority, 
+            std::nullopt, config);
         block->incRefCount();
         if (sequence.getCacheBlockIds(mWindowSize).at(beamIdx).size() == 0)
         {
